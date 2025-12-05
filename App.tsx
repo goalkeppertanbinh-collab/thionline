@@ -17,6 +17,9 @@ const REVIEW_SHEET_LINK = "https://docs.google.com/spreadsheets/d/1RSJ_7BWPjez8U
 const EXAM_SHEET_LINK = "https://docs.google.com/spreadsheets/d/1M1WohVZcWQzU0tgJGQuvnk-VgfvdLAw0mwK7kOzguys/edit?usp=drivesdk";
 const STUDENT_ACCOUNT_LINK = "https://docs.google.com/spreadsheets/d/14zR_2xMECMMI_AYk8GeUJdeaCcfDQM3Bp2xr-G3DLhk/edit?gid=0#gid=0";
 
+// NEW: Link for Exam Question Pool (Data De Thi)
+const EXAM_POOL_LINK = "https://docs.google.com/spreadsheets/d/1_WNzDFK-3ko3aK-9ZUUROMtioB7-tQ8cqUbOuFEwpvk/edit?usp=sharing";
+
 type Tab = 'review' | 'exam' | 'admin';
 
 // PRNG (Pseudo-Random Number Generator) for reproducible shuffles
@@ -119,9 +122,38 @@ const formatTime = (seconds: number) => {
 const getExportUrl = (url: string) => {
   try {
     const idMatch = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    if (idMatch && idMatch[1]) return `https://docs.google.com/spreadsheets/d/${idMatch[1]}/export?format=csv`;
+    const gidMatch = url.match(/[?&#]gid=([0-9]+)/);
+    
+    if (idMatch && idMatch[1]) {
+        let exportUrl = `https://docs.google.com/spreadsheets/d/${idMatch[1]}/export?format=csv`;
+        if (gidMatch && gidMatch[1]) {
+            exportUrl += `&gid=${gidMatch[1]}`;
+        }
+        return exportUrl;
+    }
     return url;
   } catch { return url; }
+};
+
+// NEW: Helper to fetch with Cache Busting
+const fetchWithNoCache = async (url: string) => {
+    const exportUrl = getExportUrl(url);
+    // Append timestamp to force fresh fetch
+    const separator = exportUrl.includes('?') ? '&' : '?';
+    const finalUrl = `${exportUrl}${separator}t=${Date.now()}`;
+    
+    const response = await fetch(finalUrl, {
+        cache: 'no-store',
+        headers: {
+            'Pragma': 'no-cache',
+            'Cache-Control': 'no-cache'
+        }
+    });
+    
+    if (!response.ok) {
+        throw new Error(`Failed to load: ${response.status}`);
+    }
+    return await response.text();
 };
 
 const TIME_OPTIONS = [
@@ -193,63 +225,43 @@ const App: React.FC = () => {
     const autoLoadData = async () => {
       try {
         setLoading(true);
-        const fetchReview = fetch(getExportUrl(REVIEW_SHEET_LINK)).then(r => r.text());
-        const fetchExamList = fetch(getExportUrl(EXAM_SHEET_LINK)).then(r => r.text());
-        const fetchStudents = fetch(getExportUrl(STUDENT_ACCOUNT_LINK)).then(r => r.text());
-        
-        const [reviewText, examListText, studentText] = await Promise.all([fetchReview, fetchExamList, fetchStudents]);
+        // Load in parallel
+        const results = await Promise.allSettled([
+            fetchWithNoCache(REVIEW_SHEET_LINK),
+            fetchWithNoCache(EXAM_SHEET_LINK),
+            fetchWithNoCache(STUDENT_ACCOUNT_LINK),
+            fetchWithNoCache(EXAM_POOL_LINK)
+        ]);
+
+        // Helper to get value or empty string
+        const getText = (res: PromiseSettledResult<string>) => res.status === 'fulfilled' ? res.value : '';
+
+        const reviewText = getText(results[0]);
+        const examListText = getText(results[1]);
+        const studentText = getText(results[2]);
+        const examPoolText = getText(results[3]);
         
         const parsedReview = parseQuestionsFromCSV(reviewText);
-        const parsedExams = parseExamsFromCSV(examListText);
-        const parsedStudents = parseStudentAccountsFromCSV(studentText);
-        
         setReviewQuestions(parsedReview);
-        // Exam Questions will be loaded when needed or we can preload reviewQuestions as exam pool
-        // Actually we need a separate pool for exams. Let's assume Exam Sheet contains QUESTIONS for exams, 
-        // BUT user said "EXAM_SHEET_LINK" is for "danh sach de thi" (Exam List).
-        // Wait, usually we need a Question Pool for exams. 
-        // Based on previous context: 
-        // 1. REVIEW_SHEET -> Review Questions
-        // 2. EXAM_LIST_SHEET -> Created Exams Config (Title, Date, Structure...)
-        // 3. We also need the Pool of Questions to generate exams FROM.
-        // Let's assume reviewQuestions is the pool, OR there was another link for Exam Question Pool.
-        // Re-reading prompts: "data baithi theo link...". So there IS a question pool for exams.
-        // AND "danh sach de thi" (Exam List) is ALSO on Google Sheet now.
-        // Let's assume EXAM_SHEET_LINK provided just now is the EXAM LIST.
-        // And we need another link for Exam Question Pool? 
-        // Or maybe EXAM_SHEET_LINK has multiple tabs?
-        // To keep it simple and safe based on code history:
-        // We will treat EXAM_SHEET_LINK as the Exam List Config.
-        // And we use REVIEW_SHEET_LINK as the pool? Or the previous "Exam Data" link?
-        // Let's restore the previous "Exam Data" link logic if it was overwritten.
-        // Actually, looking at the code I wrote before, I separated `reviewQuestions` and `examQuestions`.
-        // `examQuestions` should come from a question source.
-        // The user provided link `1M1Woh...` is for "danh sach de thi" (List of exams).
-        // We still need the link for "Exam Questions Pool".
-        // Let's assume the previous link `1_WNzDFK...` was the question pool? 
-        // No, the user said "data baithi theo link... 1_WNzDFK..." before.
-        // And now "danh sach de thi là link này... 1M1Woh...".
-        // So we have:
-        // 1. Review Pool: 1RSJ_7B...
-        // 2. Exam Pool: 1_WNzDFK... (Let's keep this hardcoded for now or fetch it)
-        // 3. Exam List: 1M1Woh... (New link)
-        
-        // Let's fetch the Exam Question Pool separately.
-        const EXAM_POOL_LINK = "https://docs.google.com/spreadsheets/d/1_WNzDFK-3ko3aK-9ZUUROMtioB7-tQ8cqUbOuFEwpvk/edit?usp=sharing";
-        const fetchExamPool = fetch(getExportUrl(EXAM_POOL_LINK)).then(r => r.text());
-        
-        const [poolText] = await Promise.all([fetchExamPool]);
-        const parsedExamPool = parseQuestionsFromCSV(poolText);
-        
-        setExamQuestions(parsedExamPool);
-        setCreatedExams(parsedExams); // Load exam configs
-        setStudentAccounts(parsedStudents);
 
+        const parsedExams = parseExamsFromCSV(examListText);
+        setCreatedExams(parsedExams);
+        
+        const parsedStudents = parseStudentAccountsFromCSV(studentText);
+        setStudentAccounts(parsedStudents);
+        
+        const parsedExamPool = parseQuestionsFromCSV(examPoolText);
+        setExamQuestions(parsedExamPool);
+
+        // Logic to determine initial tab
         if (parsedReview.length > 0) setActiveTab('review');
-        else setActiveTab('exam');
+        else if (parsedExams.length > 0) setActiveTab('exam');
+        
+        // Log for debugging
+        console.log(`Loaded: ${parsedReview.length} review questions, ${parsedExams.length} exams, ${parsedExamPool.length} exam pool questions.`);
+
       } catch (error) { 
         console.error("Auto load error", error);
-        setActiveTab('review');
       } finally { setLoading(false); }
     };
     autoLoadData();
@@ -303,6 +315,31 @@ const App: React.FC = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isQuizStarted, isSubmitted, studentInfo]);
 
+  // Handle manual Refresh Button
+  const handleManualRefresh = async () => {
+      setLoading(true);
+      try {
+        const results = await Promise.allSettled([
+            fetchWithNoCache(REVIEW_SHEET_LINK),
+            fetchWithNoCache(EXAM_SHEET_LINK),
+            fetchWithNoCache(STUDENT_ACCOUNT_LINK),
+            fetchWithNoCache(EXAM_POOL_LINK)
+        ]);
+        const getText = (res: PromiseSettledResult<string>) => res.status === 'fulfilled' ? res.value : '';
+
+        setReviewQuestions(parseQuestionsFromCSV(getText(results[0])));
+        setCreatedExams(parseExamsFromCSV(getText(results[1])));
+        setStudentAccounts(parseStudentAccountsFromCSV(getText(results[2])));
+        setExamQuestions(parseQuestionsFromCSV(getText(results[3])));
+        
+        alert("Đã cập nhật dữ liệu mới nhất từ Google Sheet!");
+      } catch (e) {
+          alert("Lỗi cập nhật: " + (e instanceof Error ? e.message : "Unknown error"));
+      } finally {
+          setLoading(false);
+      }
+  };
+
   const handleDataUpdate = (data: Question[]) => setReviewQuestions(data);
   const handleCreateExam = (exam: ExamConfig) => setCreatedExams(prev => [exam, ...prev]);
   const handleDeleteExam = (id: string) => { if (confirm("Bạn có chắc muốn xóa bài thi này không?")) setCreatedExams(prev => prev.filter(e => e.id !== id)); };
@@ -321,7 +358,10 @@ const App: React.FC = () => {
     e.preventDefault();
     if (!loginId || !loginPass) return;
     
-    const account = studentAccounts.find(acc => acc.id === loginId && acc.password === loginPass);
+    // Simple normalization for comparison
+    const norm = (s: string) => s.trim();
+    
+    const account = studentAccounts.find(acc => norm(acc.id) === norm(loginId) && norm(acc.password) === norm(loginPass));
     if (account) {
       setLoggedInStudent(account);
       setStudentInfo({ name: account.name, class: account.className });
@@ -583,6 +623,13 @@ const App: React.FC = () => {
                      <div className="mb-6"><label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer w-fit"><input type="checkbox" checked={isShuffleEnabled} onChange={(e) => setIsShuffleEnabled(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"/><span className="flex items-center gap-2 font-medium"><Shuffle className="w-4 h-4 text-slate-500" /> Tự động xáo trộn câu hỏi và đáp án</span></label></div>
                      <button onClick={handleStartReview} disabled={poolQuestions.length === 0} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-lg font-semibold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"><Play className="w-5 h-5 fill-current" /> Bắt đầu ôn tập ngay</button>
                   </div>
+                  
+                  {/* Footer Stats Refresh */}
+                  <div className="text-center">
+                      <button onClick={handleManualRefresh} className="text-xs text-slate-400 hover:text-indigo-600 underline flex items-center justify-center gap-1 mx-auto">
+                          <Clock className="w-3 h-3"/> Cập nhật dữ liệu mới nhất
+                      </button>
+                  </div>
                </div>
              )}
              
@@ -631,7 +678,11 @@ const App: React.FC = () => {
                          <button onClick={handleStudentLogout} className="text-sm text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors font-medium">Đăng xuất</button>
                       </div>
 
-                      <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2"><Timer className="w-6 h-6 text-red-500" /> Danh sách bài thi đang mở</h2>
+                      <div className="flex justify-between items-center mb-4">
+                         <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Timer className="w-6 h-6 text-red-500" /> Danh sách bài thi đang mở</h2>
+                         <button onClick={handleManualRefresh} className="text-xs text-indigo-600 hover:underline flex items-center gap-1"><Clock className="w-3 h-3"/> Cập nhật danh sách</button>
+                      </div>
+                      
                       {createdExams.length === 0 ? <div className="text-center p-12 bg-white rounded-2xl border border-slate-200"><div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4"><FileText className="w-8 h-8 text-slate-400" /></div><h3 className="text-lg font-medium text-slate-700">Hiện chưa có bài thi nào</h3></div> : (
                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{createdExams.map((exam) => (
                             <div key={exam.id} onClick={() => handlePrepareExam(exam)} className="bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 cursor-pointer p-6 rounded-2xl shadow-sm transition-all group">
