@@ -17,8 +17,8 @@ const REVIEW_SHEET_LINK = "https://docs.google.com/spreadsheets/d/1RSJ_7BWPjez8U
 const EXAM_SHEET_LINK = "https://docs.google.com/spreadsheets/d/1M1WohVZcWQzU0tgJGQuvnk-VgfvdLAw0mwK7kOzguys/edit?usp=drivesdk";
 const STUDENT_ACCOUNT_LINK = "https://docs.google.com/spreadsheets/d/14zR_2xMECMMI_AYk8GeUJdeaCcfDQM3Bp2xr-G3DLhk/edit?gid=0#gid=0";
 
-// NEW: Link for Exam Question Pool (Data De Thi)
-const EXAM_POOL_LINK = "https://docs.google.com/spreadsheets/d/1_WNzDFK-3ko3aK-9ZUUROMtioB7-tQ8cqUbOuFEwpvk/edit?usp=sharing";
+// NEW: Link for Exam Question Pool (Data De Thi) - Correct GID link
+const EXAM_POOL_LINK = "https://docs.google.com/spreadsheets/d/1_WNzDFK-3ko3aK-9ZUUROMtioB7-tQ8cqUbOuFEwpvk/edit?gid=0#gid=0";
 
 type Tab = 'review' | 'exam' | 'admin';
 
@@ -175,6 +175,10 @@ const COUNT_OPTIONS = [
   { label: '40 câu', value: 40 },
   { label: '50 câu', value: 50 },
 ];
+
+// Helper to normalize strings for comparison (removes spaces, lowercase)
+const normalizeStr = (s: string | undefined) => s?.trim().toLowerCase() || '';
+const isMatch = (a: string | undefined, b: string | undefined) => normalizeStr(a) === normalizeStr(b);
 
 const App: React.FC = () => {
   const [reviewQuestions, setReviewQuestions] = useState<Question[]>([]);
@@ -434,15 +438,16 @@ const App: React.FC = () => {
     // --- NEW LOGIC: Use Sections if available ---
     if (pendingExamConfig.sections && pendingExamConfig.sections.length > 0) {
        pendingExamConfig.sections.forEach(sec => {
-          // 1. Filter pool by Class/Topic/Lesson
+          // 1. Filter pool by Class/Topic/Lesson - USE CASE INSENSITIVE MATCH
           let pool = examQuestions;
-          if (sec.targetClass && sec.targetClass !== 'All') pool = pool.filter(q => q.lop === sec.targetClass);
-          if (sec.selectedTopic) pool = pool.filter(q => q.chuDe === sec.selectedTopic);
-          if (sec.selectedLesson) pool = pool.filter(q => q.bai === sec.selectedLesson);
+          
+          if (sec.targetClass && sec.targetClass !== 'All') pool = pool.filter(q => isMatch(q.lop, sec.targetClass));
+          if (sec.selectedTopic) pool = pool.filter(q => isMatch(q.chuDe, sec.selectedTopic));
+          if (sec.selectedLesson) pool = pool.filter(q => isMatch(q.bai, sec.selectedLesson));
 
           // 2. Helper to filter by Level loosely
           const filterByLevel = (p: Question[], levelKeyword: string) => {
-             return p.filter(q => q.mucDo && q.mucDo.toLowerCase().includes(levelKeyword.toLowerCase()));
+             return p.filter(q => q.mucDo && normalizeStr(q.mucDo).includes(normalizeStr(levelKeyword)));
           };
 
           const poolBiet = filterByLevel(pool, 'biết');
@@ -456,18 +461,33 @@ const App: React.FC = () => {
 
           selectedQuestions = [...selectedQuestions, ...questionsBiet, ...questionsHieu, ...questionsVanDung];
        });
+       
+       // Fallback logic: If we found 0 questions but filters exist, try broader search (e.g. ignore class) 
+       // to avoid empty exam error when data exists but mismatch happens.
+       if (selectedQuestions.length === 0 && examQuestions.length > 0) {
+           console.warn("Strict filtering returned 0 questions. Attempting loose filtering...");
+           pendingExamConfig.sections.forEach(sec => {
+               // Only filter by Topic, ignore class/lesson mismatches
+               let pool = examQuestions;
+               if (sec.selectedTopic) pool = pool.filter(q => isMatch(q.chuDe, sec.selectedTopic));
+               
+               if (pool.length > 0) {
+                   selectedQuestions.push(...selectDiverseQuestions(pool, sec.countBiet + sec.countHieu + sec.countVanDung, randomGen));
+               }
+           });
+       }
     } 
     // --- OLD LOGIC: Backward Compatibility ---
     else {
         let examPool = examQuestions;
         if (pendingExamConfig.targetClass && pendingExamConfig.targetClass !== 'All') {
-          examPool = examPool.filter(q => q.lop === pendingExamConfig.targetClass);
+          examPool = examPool.filter(q => isMatch(q.lop, pendingExamConfig.targetClass));
         }
         if (pendingExamConfig.selectedTopic) {
-          examPool = examPool.filter(q => q.chuDe === pendingExamConfig.selectedTopic);
+          examPool = examPool.filter(q => isMatch(q.chuDe, pendingExamConfig.selectedTopic));
         }
         if (pendingExamConfig.selectedLesson) {
-          examPool = examPool.filter(q => q.bai === pendingExamConfig.selectedLesson);
+          examPool = examPool.filter(q => isMatch(q.bai, pendingExamConfig.selectedLesson));
         }
         
         // Take N seeded random questions
@@ -475,7 +495,7 @@ const App: React.FC = () => {
     }
 
     if (selectedQuestions.length === 0) {
-      alert("Không tìm thấy câu hỏi nào phù hợp với cấu trúc đề thi này (kiểm tra lại dữ liệu hoặc mức độ câu hỏi).");
+      alert(`Không tìm thấy câu hỏi nào phù hợp với cấu trúc đề thi này.\n\nNguyên nhân có thể:\n1. Chưa tải được dữ liệu "Kho Đề Thi" (${examQuestions.length} câu).\n2. Tên chủ đề/bài học trong cấu hình không khớp với dữ liệu.\n3. Số lượng câu hỏi yêu cầu vượt quá số lượng có sẵn.`);
       return;
     }
 
