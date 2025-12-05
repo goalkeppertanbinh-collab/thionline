@@ -1,0 +1,5 @@
+{
+  "name": "MathMaster: loangding",
+  "description": "A Google Sheet-powered math review application. Import your questions, filter by topic, and get real-time AI tutoring assistance using Gemini.",
+  "requestFramePermissions": []
+}
