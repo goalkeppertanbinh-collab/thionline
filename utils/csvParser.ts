@@ -40,55 +40,101 @@ export const parseQuestionsFromCSV = (csvText: string): Question[] => {
 
   const delimiter = detectDelimiter(content);
   
-  // Skip header if found
+  // Default indices (Standard Template)
+  // 0:Lop, 1:ChuDe, 2:Bai, 3:MucDo, 4:CauHoi, 5:LinkAnh, 6:A, 7:B, 8:C, 9:D, 10:Dung, 11:GoiY, 12:LoiGiai
+  let idxLop = 0, idxChuDe = 1, idxBai = 2, idxMucDo = 3, idxCauHoi = 4, idxLinkAnh = 5;
+  let idxA = 6, idxB = 7, idxC = 8, idxD = 9, idxDung = 10, idxGoiY = 11, idxLoiGiai = 12;
+
+  // Detect Header Row
   let headerIndex = -1;
   const keywords = ['câu hỏi', 'cau hoi', 'question', 'đáp án', 'dap an', 'lớp', 'lop'];
   for (let i = 0; i < Math.min(lines.length, 15); i++) {
     const cols = splitLineWithDelimiter(lines[i], delimiter).map(c => c.toLowerCase());
     if (cols.some(c => keywords.some(k => c.includes(k)))) {
       headerIndex = i;
+      
+      // Dynamic Column Mapping
+      const find = (kws: string[]) => cols.findIndex(c => kws.some(k => c.includes(k)));
+      
+      const _lop = find(['lớp', 'lop', 'class']);
+      const _chuDe = find(['chủ đề', 'chu de', 'topic', 'chương']);
+      const _bai = find(['bài', 'bai', 'lesson', 'tên bài']);
+      const _mucDo = find(['mức độ', 'muc do', 'level']);
+      const _cauHoi = find(['câu hỏi', 'cau hoi', 'question', 'nội dung']);
+      const _linkAnh = find(['link ảnh', 'link anh', 'image', 'hình']);
+      
+      // Answers can be tricky. Look for "Đáp án A" specifically or just "A" if strict
+      const _a = find(['đáp án a', 'dap an a']); 
+      const _b = find(['đáp án b', 'dap an b']);
+      const _c = find(['đáp án c', 'dap an c']);
+      const _d = find(['đáp án d', 'dap an d']);
+      
+      const _dung = find(['đáp án đúng', 'dap an dung', 'correct', 'đáp án']); // "đáp án" might match "đáp án a", check order/uniqueness if needed, but usually specific headers exist
+      
+      // Refine _dung: if it matched "đáp án a", look for "đúng"
+      const _dungStrict = cols.findIndex(c => (c.includes('đáp án') || c.includes('dap an')) && (c.includes('đúng') || c.includes('dung')));
+      
+      const _goiY = find(['gợi ý', 'goi y', 'hint']);
+      const _loiGiai = find(['lời giải', 'loi giai', 'solution', 'chi tiết']);
+
+      if (_lop !== -1) idxLop = _lop;
+      if (_chuDe !== -1) idxChuDe = _chuDe;
+      if (_bai !== -1) idxBai = _bai;
+      if (_mucDo !== -1) idxMucDo = _mucDo;
+      if (_cauHoi !== -1) idxCauHoi = _cauHoi;
+      if (_linkAnh !== -1) idxLinkAnh = _linkAnh;
+      
+      if (_a !== -1) idxA = _a;
+      if (_b !== -1) idxB = _b;
+      if (_c !== -1) idxC = _c;
+      if (_d !== -1) idxD = _d;
+      
+      if (_dungStrict !== -1) idxDung = _dungStrict;
+      else if (_dung !== -1 && _dung !== _a) idxDung = _dung; // Fallback if strict not found
+
+      if (_goiY !== -1) idxGoiY = _goiY;
+      if (_loiGiai !== -1) idxLoiGiai = _loiGiai;
+
       break;
     }
   }
 
-  // --- STRICT MAPPING THEO FILE MẪU GOOGLE SHEET ---
   const questions: Question[] = [];
   const startRow = headerIndex !== -1 ? headerIndex + 1 : 0;
 
   for (let i = startRow; i < lines.length; i++) {
     const cols = splitLineWithDelimiter(lines[i], delimiter);
     
-    // Skip rows with too few columns. We need at least up to Question (Index 4)
-    if (cols.length < 5) continue; 
-
     // Helper to safely get column content
     const get = (index: number) => (cols[index] || '').trim();
 
     // Skip "ghost" rows where Question is empty
-    if (!get(4)) continue;
+    const qContent = get(idxCauHoi);
+    if (!qContent) continue;
 
     const normalizeAnswer = (ans: string): 'A' | 'B' | 'C' | 'D' => {
       if (!ans) return 'A';
       const u = ans.toUpperCase().trim();
+      // Sometimes answer is "A. Value", extract first char
       const char = u.charAt(0);
       return ['A', 'B', 'C', 'D'].includes(char) ? (char as 'A'|'B'|'C'|'D') : 'A';
     };
 
     questions.push({
       id: `q-${i}`,
-      lop: get(0),       // Cột A
-      chuDe: get(1),     // Cột B
-      bai: get(2),       // Cột C
-      mucDo: get(3),     // Cột D
-      cauHoi: get(4),    // Cột E
-      linkAnh: get(5),   // Cột F
-      dapAnA: get(6),    // Cột G
-      dapAnB: get(7),    // Cột H
-      dapAnC: get(8),    // Cột I
-      dapAnD: get(9),    // Cột J
-      dapAnDung: normalizeAnswer(get(10)), // Cột K
-      goiY: get(11),     // Cột L
-      loiGiai: get(12),  // Cột M
+      lop: get(idxLop),
+      chuDe: get(idxChuDe),
+      bai: get(idxBai),
+      mucDo: get(idxMucDo),
+      cauHoi: qContent,
+      linkAnh: get(idxLinkAnh),
+      dapAnA: get(idxA),
+      dapAnB: get(idxB),
+      dapAnC: get(idxC),
+      dapAnD: get(idxD),
+      dapAnDung: normalizeAnswer(get(idxDung)),
+      goiY: get(idxGoiY),
+      loiGiai: get(idxLoiGiai),
     });
   }
 
@@ -227,9 +273,6 @@ export const parseExamsFromCSV = (csvText: string): ExamConfig[] => {
 
   // Define indexes based on the Copy/Paste format from AdminPanel
   // ID | Title | Date | Duration | Variants | StructureJSON | Status
-  // If header found, we can try to map dynamically, but let's default to fixed structure 
-  // if header is missing or looks like the standard export.
-  
   let idxID = 0, idxTitle = 1, idxDate = 2, idxDur = 3, idxVar = 4, idxStruct = 5, idxStatus = 6;
 
   if (headerIndex !== -1) {
@@ -239,7 +282,9 @@ export const parseExamsFromCSV = (csvText: string): ExamConfig[] => {
       const fStruct = cols.findIndex(c => kwStruct.some(k => c.includes(k)));
       if (fTitle !== -1) idxTitle = fTitle;
       if (fStruct !== -1) idxStruct = fStruct;
-      // ... assume relative positions or fixed for others
+      
+      const fDate = cols.findIndex(c => c.includes('ngày') || c.includes('date'));
+      if (fDate !== -1) idxDate = fDate;
   }
 
   const exams: ExamConfig[] = [];
